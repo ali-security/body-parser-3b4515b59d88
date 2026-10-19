@@ -1,16 +1,20 @@
 name: ci
 
 on:
-  push:
-    branches:
-      - 1.x
-  pull_request:
-    branches:
-      - 1.x
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional mocha selector (e.g. --grep "pattern") to run a subset of tests'
+        required: false
+        default: ''
+
+env:
+  NPM_CONFIG_REGISTRY: https://:2025-12-01T15%3A53%3A40.942000Z@time-machines-npm.sealsecurity.io/
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -207,7 +211,9 @@ jobs:
     - name: Run tests
       shell: bash
       run: |
-        if npm -ps ls nyc | grep -q nyc; then
+        if [ -n "${{ inputs.test-filter }}" ]; then
+          npm test -- ${{ inputs.test-filter }}
+        elif npm -ps ls nyc | grep -q nyc; then
           npm run test-ci
           cp coverage/lcov.info "coverage/${{ matrix.name }}.lcov"
         else
@@ -225,30 +231,18 @@ jobs:
         path: ./coverage/lcov.info
         retention-days: 1
 
-  coverage:
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install lcov
+    - name: Pack npm tarball
+      if: matrix.node-version == '22'
       shell: bash
-      run: sudo apt-get -y install lcov
+      run: |
+        mkdir -p seal-dist
+        npm pack --pack-destination seal-dist
+        ls -la seal-dist
 
-    - name: Collect coverage reports
-      uses: actions/download-artifact@v6
+    - name: Upload npm tarball
+      if: matrix.node-version == '22'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
       with:
-        path: ./coverage
-        pattern: coverage-node-*
-
-    - name: Merge coverage reports
-      shell: bash
-      run: find ./coverage -name lcov.info -exec printf '-a %q\n' {} \; | xargs lcov -o ./lcov.info
-
-    - name: Upload coverage report
-      uses: coverallsapp/github-action@648a8eb78e6d50909eff900e4ec85cab4524a45b # v2.3.6
-      with:
-        file: ./lcov.info
+        name: npm-package
+        path: seal-dist/*.tgz
+        if-no-files-found: error
